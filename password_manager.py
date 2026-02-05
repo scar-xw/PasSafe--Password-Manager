@@ -26,7 +26,9 @@ class PasswordManager:
         if initial_values is not None:
             for key, values in initial_values.items():# the .items() method can iterate between tuples
                     self.add_password(key, values)
-
+            else:
+                with open(path, 'w') as f:
+                    pass
             
     def load_password_file(self, path):
         try:
@@ -34,10 +36,12 @@ class PasswordManager:
                 for line in f:
                     site, encrypted = line.split(":")
                     self.password_dict[site]  = Fernet(self.key).decrypt(encrypted.encode()).decode()
+                    error = "Success! Password loaded/created with key"
 
         except cryptography.fernet.InvalidToken:
             self.password_dict = {} 
-            print("\nERROR: USER KEY DOES NOT MATCH PASSWORD FILE KEY, ENTER ANOTHER KEY OR FILE\n")
+            error ="\nERROR: USER KEY DOES NOT MATCH PASSWORD FILE KEY, ENTER ANOTHER KEY OR FILE\n"
+        return error
 
     def add_password(self, site, password):
         self.password_dict[site] = password
