@@ -1,62 +1,110 @@
-from cryptography.fernet import Fernet
-import cryptography
+import os
+
+from cryptography.fernet import Fernet, InvalidToken
+
 
 class PasswordManager:
-    # Key storage and creation
-    def __init__ (self):
-       self.key = None
-       self.password = None
-       self.password_dict = {} 
-    
+    """Handles key management and encrypted password storage (no UI code)."""
+
+    def __init__(self):
+        self.key = None
+        self.password_file = None
+        self.password_dict = {}
+
+    # ---------- key handling ----------
     def create_key(self, path):
-        self.key = Fernet.generate_key()
-        with open(path, 'wb') as f:
-            f.write(self.key)
+        key = Fernet.generate_key()
+        try:
+            with open(path, "wb") as f:
+                f.write(key)
+        except OSError as e:
+            return f"Error: could not write key file ({e})."
+        self.key = key
+        return "Key created and loaded successfully!"
 
     def load_key(self, path):
-        with open(path, 'rb') as f:
-            self.key = f.read()
-
-    # Password creation and storage
-
-    
-    def create_password_file(self, path, initial_values=None):
-        self.password_file = path
-
-        if initial_values is not None:
-            for key, values in initial_values.items():# the .items() method can iterate between tuples
-                    self.add_password(key, values)
-            else:
-                with open(path, 'w') as f:
-                    pass
-            
-    def load_password_file(self, path):
+        if not os.path.exists(path):
+            return "Error: Key file not found."
         try:
-            with open(path, 'r') as f:
+            with open(path, "rb") as f:
+                key = f.read().strip()
+            Fernet(key)  # validate the key format
+        except (ValueError, OSError):
+            return "Error: That file is not a valid key file."
+        self.key = key
+        return "Key loaded successfully!"
+
+    # ---------- password file handling ----------
+    def create_password_file(self, path):
+        if not self.key:
+            return "Error: Create or load a key first."
+        if os.path.exists(path):
+            return "Error: File already exists (use option 4 to load it)."
+        self.password_file = path
+        self.password_dict = {}
+        return self._save()
+
+    def load_password_file(self, path):
+        if not self.key:
+            return "Error: Create or load a key first."
+        if not os.path.exists(path):
+            return "Error: Password file not found."
+        fernet = Fernet(self.key)
+        loaded = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
                 for line in f:
-                    site, encrypted = line.split(":")
-                    self.password_dict[site]  = Fernet(self.key).decrypt(encrypted.encode()).decode()
-                    error = "Success! Password loaded/created with key"
+                    line = line.strip()
+                    if ":" not in line:
+                        continue
+                    # Fernet tokens never contain ":", so split from the right
+                    site, encrypted = line.rsplit(":", 1)
+                    loaded[site] = fernet.decrypt(encrypted.encode()).decode()
+        except InvalidToken:
+            return "Error: This key does not match the password file!"
+        except OSError as e:
+            return f"Error loading file: {e}"
+        self.password_file = path
+        self.password_dict = loaded
+        return "Passwords loaded successfully!"
 
-        except cryptography.fernet.InvalidToken:
-            self.password_dict = {} 
-            error ="\nERROR: USER KEY DOES NOT MATCH PASSWORD FILE KEY, ENTER ANOTHER KEY OR FILE\n"
-        return error
+    def _save(self):
+        """Rewrite the whole password file (avoids duplicate entries)."""
+        fernet = Fernet(self.key)
+        try:
+            with open(self.password_file, "w", encoding="utf-8") as f:
+                for site, pw in self.password_dict.items():
+                    token = fernet.encrypt(pw.encode()).decode()
+                    f.write(f"{site}:{token}\n")
+        except OSError as e:
+            return f"Error saving file: {e}"
+        return "Password file saved successfully!"
 
+    # ---------- passwords ----------
     def add_password(self, site, password):
+        if not self.key:
+            return "Error: Create or load a key first."
+        if not self.password_file:
+            return "Error: Create or load a password file first."
+        if not site:
+            return "Error: Site name cannot be empty."
         self.password_dict[site] = password
+        result = self._save()
+        if result.startswith("Error"):
+            return result
+        return f"Password for '{site}' saved!"
 
-        if self.password_file is not None:
-            # a+ reads and appends 
-            with open(self.password_file, 'a+') as f:
-                # encrypted = the new password for the site
-                encrypted = Fernet(self.key).encrypt(password.encode())
-                f.write(site + ":" + encrypted.decode() + "\n")
-    
     def get_password(self, site):
-        return self.password_dict[site]
-    
+        return self.password_dict.get(site)
 
-        
-    
-       
+    def delete_password(self, site):
+        if site not in self.password_dict:
+            return "Error: Site not found."
+        del self.password_dict[site]
+        result = self._save()
+        if result.startswith("Error"):
+            return result
+        return f"Password for '{site}' deleted."
+
+    def list_sites(self):
+        return sorted(self.password_dict)
